@@ -19,14 +19,62 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Definir variáveis de ambiente com base na branch
+      # 2. Definir variáveis de ambiente com base na branch (fix de aspas e nomes corretos dos serviços)
       - name: Set environment by branch
+        shell: bash
         run: |
-          BRANCH="${GITHUB_REF##*/}"
+          BRANCH=${GITHUB_REF##*/}
           if [ "$BRANCH" = "prod" ]; then
-            echo "ECR_REPO=my-app-prod" >> $GITHUB_ENV
-            echo "SERVICE=my-app-prod-service" >> $GITHUB_ENV
-            echo "TASK_DEF=my-app-prod-task" >> $GITHUB_ENV
+            echo ECR_REPO=my-app-prod >> $GITHUB_ENV
+            echo SERVICE=my-app-prod-servicee >> $GITHUB_ENV
+            echo TASK_DEF=my-app-prod-task >> $GITHUB_ENV
           else
-            echo "ECR_REPO=my-app-dev" >> $GITHUB_ENV
-            echo "SER
+            echo ECR_REPO=my-app-dev >> $GITHUB_ENV
+            echo SERVICE=my-app-dev-servicee >> $GITHUB_ENV
+            echo TASK_DEF=my-app-dev-task >> $GITHUB_ENV
+          fi
+
+      # 3. Autenticação na AWS via OIDC
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::059200471100:role/GitHubActions-ECS-Deploy
+          aws-region: us-east-1
+
+      # 4. Verificar se a role foi assumida corretamente
+      - name: Verify assumed role
+        run: aws sts get-caller-identity
+
+      # 5. Login no Amazon ECR
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 6. Build, tag e push da imagem Docker para o ECR
+      - name: Build, tag, and push image
+        run: |
+          IMAGE_URI="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${ECR_REPO}:${GITHUB_SHA}"
+          echo "Building image $IMAGE_URI"
+          docker build -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+
+      # 7. Debug: listar clusters ECS
+      - name: List ECS clusters
+        run: |
+          echo "Listing ECS clusters:"
+          aws ecs list-clusters
+
+      # 8. Debug: listar serviços do cluster
+      - name: List ECS services in cluster
+        run: |
+          echo "Listing services in cluster my-app-cluster:"
+          aws ecs list-services --cluster my-app-cluster
+
+      # 9. Atualizar ECS service
+      - name: Update ECS service
+        run: |
+          echo "Updating ECS service $SERVICE in cluster my-app-cluster..."
+          aws ecs update-service \
+            --cluster my-app-cluster \
+            --service $SERVICE \
+            --force-new-deployment
