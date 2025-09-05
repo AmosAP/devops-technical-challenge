@@ -1,4 +1,4 @@
-name: Deploy to ECS
+name: Deploy to ECS via OIDC
 
 on:
   push:
@@ -25,17 +25,17 @@ jobs:
             echo "ECR_REPO=my-app-prod" >> $GITHUB_ENV
             echo "TASK_DEF=my-app-prod-task" >> $GITHUB_ENV
             echo "SERVICE=my-app-prod-service" >> $GITHUB_ENV
-            echo "ROLE_ARN=${{ secrets.AWS_ROLE_ARN_PROD }}" >> $GITHUB_ENV
             echo "CLUSTER=my-app-prod-cluster" >> $GITHUB_ENV
+            echo "ROLE_ARN=arn:aws:iam::059200471100:role/GitHubActionsRole" >> $GITHUB_ENV
           else
             echo "ECR_REPO=my-app-dev" >> $GITHUB_ENV
             echo "TASK_DEF=my-app-dev-task" >> $GITHUB_ENV
             echo "SERVICE=my-app-dev-service" >> $GITHUB_ENV
-            echo "ROLE_ARN=${{ secrets.AWS_ROLE_ARN_DEV }}" >> $GITHUB_ENV
             echo "CLUSTER=my-app-dev-cluster" >> $GITHUB_ENV
+            echo "ROLE_ARN=arn:aws:iam::059200471100:role/GitHubActionsRole" >> $GITHUB_ENV
           fi
 
-      - name: Configure AWS credentials via role
+      - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: ${{ env.ROLE_ARN }}
