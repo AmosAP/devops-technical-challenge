@@ -1,0 +1,53 @@
+name: Deploy to ECS
+
+on:
+  push:
+    branches: [ "dev", "prod" ]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set environment by branch
+        run: |
+          if [[ "${GITHUB_REF##*/}" == "prod" ]]; then
+            echo "ECR_REPO=my-app-prod" >> $GITHUB_ENV
+            echo "TASK_DEF=my-app-prod-task" >> $GITHUB_ENV
+            echo "SERVICE=my-app-prod-service" >> $GITHUB_ENV
+            echo "ROLE_ARN=${{ secrets.AWS_ROLE_ARN_PROD }}" >> $GITHUB_ENV
+          else
+            echo "ECR_REPO=my-app-dev" >> $GITHUB_ENV
+            echo "TASK_DEF=my-app-dev-task" >> $GITHUB_ENV
+            echo "SERVICE=my-app-dev-service" >> $GITHUB_ENV
+            echo "ROLE_ARN=${{ secrets.AWS_ROLE_ARN_DEV }}" >> $GITHUB_ENV
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build, tag, and push image
+        run: |
+          IMAGE_URI="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${ECR_REPO}:${GITHUB_SHA}"
+          docker build -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+
+      - name: Update ECS service
+        run: |
+          aws ecs update-service \
+            --cluster my-app-cluster \
+            --service $SERVICE \
+            --force-new-deployment
