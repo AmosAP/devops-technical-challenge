@@ -7,8 +7,8 @@ on:
       - "prod"
 
 permissions:
-  id-token: write   # necessário para OIDC
-  contents: read    # necessário para checkout
+  id-token: write
+  contents: read
 
 jobs:
   deploy:
@@ -22,6 +22,28 @@ jobs:
       # 2. Definir variáveis de ambiente com base na branch
       - name: Set environment by branch
         run: |
-          if [[ "${GITHUB_REF##*/}" == "prod" ]]; then
+          BRANCH="${GITHUB_REF##*/}"
+          if [ "$BRANCH" = "prod" ]; then
             echo "ECR_REPO=my-app-prod" >> $GITHUB_ENV
-            echo "SERVICE=my-app-
+            echo "SERVICE=my-app-prod-service" >> $GITHUB_ENV
+            echo "TASK_DEF=my-app-prod-task" >> $GITHUB_ENV
+          else
+            echo "ECR_REPO=my-app-dev" >> $GITHUB_ENV
+            echo "SERVICE=my-app-dev-service" >> $GITHUB_ENV
+            echo "TASK_DEF=my-app-dev-task" >> $GITHUB_ENV
+          fi
+
+      # 3. Autenticação na AWS via OIDC
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::059200471100:role/GitHubActions-ECS-Deploy
+          aws-region: us-east-1
+
+      # 4. Verificar se a role foi assumida corretamente
+      - name: Verify assumed role
+        run: aws sts get-caller-identity
+
+      # 5. Login no Amazon ECR
+      - name: Login to Amazon ECR
+        uses: aws-actions/
