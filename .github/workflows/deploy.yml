@@ -1,57 +1,40 @@
-name: Deploy to ECS
+name: Minimal AWS Role Test
 
 on:
   push:
-    branches: [ "dev", "prod" ]
+    branches: [ "main" ]  # Ou a branch que você quer testar
 
 permissions:
   id-token: write
   contents: read
 
 jobs:
-  deploy:
+  test-aws-role:
     runs-on: ubuntu-latest
     env:
-      AWS_REGION: ${{ secrets.AWS_REGION }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}       # Ex: us-east-1
       AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}       # ARN completo da role a assumir
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set environment by branch
-        id: set-env
-        run: |
-          if [[ "${GITHUB_REF##*/}" == "prod" ]]; then
-            echo "ECR_REPO=my-app-prod" >> $GITHUB_ENV
-            echo "TASK_DEF=my-app-prod-task" >> $GITHUB_ENV
-            echo "SERVICE=my-app-prod-service" >> $GITHUB_ENV
-            echo "ROLE_ARN=${{ secrets.AWS_ROLE_ARN_PROD }}" >> $GITHUB_ENV
-          else
-            echo "ECR_REPO=my-app-dev" >> $GITHUB_ENV
-            echo "TASK_DEF=my-app-dev-task" >> $GITHUB_ENV
-            echo "SERVICE=my-app-dev-service" >> $GITHUB_ENV
-            echo "ROLE_ARN=${{ secrets.AWS_ROLE_ARN_DEV }}" >> $GITHUB_ENV
-          fi
-
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials via role
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: ${{ env.ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
+      - name: Verify AWS identity
+        run: |
+          echo "Checking assumed role identity..."
+          aws sts get-caller-identity
+
+      - name: Login to Amazon ECR (optional)
         uses: aws-actions/amazon-ecr-login@v1
 
-      - name: Build, tag, and push image
+      - name: Build and push Docker image (optional)
         run: |
-          IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${GITHUB_SHA}"
+          IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/test-image:latest"
           docker build -t "$IMAGE_URI" .
           docker push "$IMAGE_URI"
-          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
-
-      - name: Update ECS service
-        run: |
-          aws ecs update-service \
-            --cluster my-app-cluster \
-            --service $SERVICE \
-            --force-new-deployment
