@@ -1,4 +1,4 @@
-name: Deploy to ECS (dev/prod)
+name: Deploy to ECS
 
 on:
   push:
@@ -10,106 +10,71 @@ permissions:
   id-token: write
   contents: read
 
-env:
-  AWS_REGION: ${{ secrets.AWS_REGION }}
-  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Checkout do código
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set variables by branch
-        id: setenv
+      # 2. Definir variáveis de ambiente com base na branch (fix de aspas e nomes corretos dos serviços)
+      - name: Set environment by branch
         shell: bash
         run: |
           BRANCH=${GITHUB_REF##*/}
           if [ "$BRANCH" = "prod" ]; then
-            echo "ECR_REPO=my-app-prod" >> $GITHUB_ENV
-            echo "TASK_FAMILY=my-app-prod-task" >> $GITHUB_ENV
-            echo "SERVICE_NAME=my-app-prod-servicee" >> $GITHUB_ENV
-            echo "TG_NAME=my-app-prod-tg" >> $GITHUB_ENV
-            echo "OPENWEATHER_API_KEY=${{ secrets.OPENWEATHER_API_KEY_PROD }}" >> $GITHUB_ENV
+            echo ECR_REPO=my-app-prod >> $GITHUB_ENV
+            echo SERVICE=my-app-prod-servicee >> $GITHUB_ENV
+            echo TASK_DEF=my-app-prod-task >> $GITHUB_ENV
           else
-            echo "ECR_REPO=my-app-dev" >> $GITHUB_ENV
-            echo "TASK_FAMILY=my-app-dev-task" >> $GITHUB_ENV
-            echo "SERVICE_NAME=my-app-dev-servicee" >> $GITHUB_ENV
-            echo "TG_NAME=my-app-dev-tg" >> $GITHUB_ENV
-            echo "OPENWEATHER_API_KEY=${{ secrets.OPENWEATHER_API_KEY_DEV }}" >> $GITHUB_ENV
+            echo ECR_REPO=my-app-dev >> $GITHUB_ENV
+            echo SERVICE=my-app-dev-servicee >> $GITHUB_ENV
+            echo TASK_DEF=my-app-dev-task >> $GITHUB_ENV
           fi
-          echo "ROLE_ARN=${{ secrets.AWS_ROLE_ARN }}" >> $GITHUB_ENV
 
-      - name: Configure AWS credentials via OIDC
+      # 3. Autenticação na AWS via OIDC
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ env.ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::059200471100:role/GitHubActions-ECS-Deploy
+          aws-region: us-east-1
 
-      - name: Verify identity
+      # 4. Verificar se a role foi assumida corretamente
+      - name: Verify assumed role
         run: aws sts get-caller-identity
 
-      - name: Ensure ECR repository exists
-        run: |
-          aws ecr describe-repositories --repository-names ${ECR_REPO} || aws ecr create-repository --repository-name ${ECR_REPO}
-
+      # 5. Login no Amazon ECR
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag and push Docker image
+      # 6. Build, tag e push da imagem Docker para o ECR
+      - name: Build, tag, and push image
         run: |
-          IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${GITHUB_SHA}"
-          echo "IMAGE_URI=$IMAGE_URI"
+          IMAGE_URI="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${ECR_REPO}:${GITHUB_SHA}"
+          echo "Building image $IMAGE_URI"
           docker build -t "$IMAGE_URI" .
           docker push "$IMAGE_URI"
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
-      - name: Install jq (for task def manipulation)
+      # 7. Debug: listar clusters ECS
+      - name: List ECS clusters
         run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
-
-      - name: Create new task definition revision (update image + env)
-        env:
-          IMAGE_URI: ${{ env.IMAGE_URI }}
-          TASK_FAMILY: ${{ env.TASK_FAMILY }}
-          OPENWEATHER_API_KEY: ${{ env.OPENWEATHER_API_KEY }}
-        run: |
-          set -e
-          echo "Describing current task definition family: $TASK_FAMILY"
-          aws ecs describe-task-definition --task-definition "$TASK_FAMILY" > taskdef.json
-
-          # Extract taskDefinition block and remove fields not allowed for register
-          cat taskdef.json | jq '.taskDefinition
-            | .containerDefinitions[0].image = "'"$IMAGE_URI"'"
-            | .containerDefinitions[0].environment = [{"name":"OPENWEATHER_API_KEY","value":"'"$OPENWEATHER_API_KEY"'"}]
-            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' > new-taskdef.json
-
-          echo "Registering new task definition revision..."
-          aws ecs register-task-definition --cli-input-json file://new-taskdef.json > registered.json
-
-          NEW_TASK_DEF_ARN=$(cat registered.json | jq -r '.taskDefinition.taskDefinitionArn')
-          echo "NEW_TASK_DEF_ARN=$NEW_TASK_DEF_ARN" >> $GITHUB_ENV
-
-      - name: Debug: list clusters & services
-        run: |
-          echo "Clusters:"
+          echo "Listing ECS clusters:"
           aws ecs list-clusters
-          echo "Services in my-app-cluster:"
-          aws ecs list-services --cluster my-app-cluster || true
 
-      - name: Update ECS service to new task definition
-        env:
-          CLUSTER: my-app-cluster
-          SERVICE: ${{ env.SERVICE_NAME }}
+      # 8. Debug: listar serviços do cluster
+      - name: List ECS services in cluster
         run: |
-          echo "Updating service $SERVICE to taskDefinition ${{ env.NEW_TASK_DEF_ARN }}"
-          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --task-definition "${{ env.NEW_TASK_DEF_ARN }}" --force-new-deployment
+          echo "Listing services in cluster my-app-cluster:"
+          aws ecs list-services --cluster my-app-cluster
 
-      - name: Wait for service stability
+      # 9. Atualizar ECS service
+      - name: Update ECS service
         run: |
-          echo "Waiting for service stable..."
-          aws ecs wait services-stable --cluster my-app-cluster --services "${{ env.SERVICE_NAME }}" --region $AWS_REGION
-          echo "Service is stable (or wait timed out)."
+          echo "Updating ECS service $SERVICE in cluster my-app-cluster..."
+          aws ecs update-service \
+            --cluster my-app-cluster \
+            --service $SERVICE \
+            --force-new-deployment
