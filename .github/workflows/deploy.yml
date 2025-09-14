@@ -1,0 +1,60 @@
+name: Deploy to ECS Fargate
+
+on:
+  push:
+    branches: [ "dev", "prod" ]
+
+env:
+  AWS_REGION: us-east-
+  ECR_REPO: weather-api
+  CLUSTER_NAME: weather-api-cluster
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select environment
+        id: envsel
+        run: |
+          if [ "${{ github.ref_name }}" = "dev" ]; then
+            echo "SERVICE_NAME=weather-api-dev" >> $GITHUB_OUTPUT
+            echo "TASK_DEF=weather-api-dev-task" >> $GITHUB_OUTPUT
+            echo "IMAGE_TAG=dev-${{ github.sha }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref_name }}" = "prod" ]; then
+            echo "SERVICE_NAME=weather-api-prod" >> $GITHUB_OUTPUT
+            echo "TASK_DEF=weather-api-prod-task" >> $GITHUB_OUTPUT
+            echo "IMAGE_TAG=prod-${{ github.sha }}" >> $GITHUB_OUTPUT
+          else
+            exit 1
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::<ACCOUNT_ID>:role/github-actions-ecs-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        run: |
+          docker build -t $ECR_REPO:${{ steps.envsel.outputs.IMAGE_TAG }} .
+          ECR_URI=${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO }}
+          docker tag $ECR_REPO:${{ steps.envsel.outputs.IMAGE_TAG }} $ECR_URI:${{ steps.envsel.outputs.IMAGE_TAG }}
+          docker push $ECR_URI:${{ steps.envsel.outputs.IMAGE_TAG }}
+          echo "IMAGE_URI=$ECR_URI:${{ steps.envsel.outputs.IMAGE_TAG }}" >> $GITHUB_ENV
+
+      - name: Update ECS service
+        run: |
+          aws ecs update-service \
+            --cluster $CLUSTER_NAME \
+            --service "${{ steps.envsel.outputs.SERVICE_NAME }}" \
+            --force-new-deployment
