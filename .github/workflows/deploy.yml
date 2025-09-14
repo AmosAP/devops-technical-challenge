@@ -33,6 +33,7 @@ jobs:
             echo "IMAGE_TAG=prod-${{ github.sha }}" >> $GITHUB_OUTPUT
           else
             exit 1
+            fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
