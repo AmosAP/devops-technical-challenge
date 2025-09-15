@@ -5,7 +5,7 @@ on:
     branches: [ "dev", "prod" ]
 
 env:
-  AWS_REGION: us-east-
+  AWS_REGION: us-east-1
   ECR_REPO: weather-api
   CLUSTER_NAME: weather-api-cluster
 
